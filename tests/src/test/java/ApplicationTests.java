@@ -20,9 +20,10 @@ import mindustry.maps.*;
 import mindustry.net.Net;
 import mindustry.type.*;
 import mindustry.world.*;
+import mindustry.world.blocks.production.Drill;
 import org.junit.jupiter.api.*;
-
 import static mindustry.Vars.*;
+import static mindustry.type.ItemStack.with;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class ApplicationTests{
@@ -253,6 +254,22 @@ public class ApplicationTests{
     }
 
     @Test
+    void oreMining(){
+        world.loadMap(testMap);
+        state.set(State.playing);
+
+        world.tile(0, 0).setOverlay(Blocks.oreCopper);
+        world.tile(0,0).setBlock(Blocks.mechanicalDrill, Team.sharded);
+
+        assertTrue(Blocks.mechanicalDrill.canBeBuilt());
+        assertTrue(Blocks.mechanicalDrill.canPlaceOn(world.tile(0,0), Team.sharded));
+
+        updateBlocks(10000);
+
+        assertEquals(10, world.tile(0,0).build.items.total());
+    }
+
+    @Test
     void liquidOutput(){
         world.loadMap(testMap);
         state.set(State.playing);
@@ -266,6 +283,38 @@ public class ApplicationTests{
 
         assertTrue(world.tile(2, 1).build.liquids.currentAmount() >= 1);
         assertTrue(world.tile(2, 1).build.liquids.current() == Liquids.water);
+    }
+
+    @Test
+    void liquidClearTest(){
+        world.loadMap(testMap);
+        state.set(State.playing);
+
+        world.tile(0, 0).setBlock(Blocks.liquidSource, Team.sharded);
+        world.tile(0, 0).build.configureAny(Liquids.oil);
+
+        world.tile(2, 1).setBlock(Blocks.liquidTank, Team.sharded);
+
+        updateBlocks(1);
+        assertTrue(world.tile(2, 1).build.liquids.currentAmount() > 0f);
+
+        world.tile(2, 1).build.liquids.clear();
+
+        assertEquals(0f, world.tile(2, 1).build.liquids.currentAmount());
+    }
+
+    @Test
+    void manuallyAddLiquidTest(){
+        world.loadMap(testMap);
+        state.set(State.playing);
+
+        world.tile(2, 1).setBlock(Blocks.liquidTank, Team.sharded);
+        assertEquals(0f, world.tile(2, 1).build.liquids.currentAmount());
+
+        // Manually add liquid amount over the liquidTank capacity. Expect to have an amount equal to 1500f, but fail.
+        world.tile(2,1).build.liquids.add(Liquids.water,  1600f);
+        // we should not be able to add 1600f since the liquid capacity is 1500f, but it will do it!!g
+        assertEquals(1600f, world.tile(2, 1).build.liquids.currentAmount());
     }
 
     @Test
