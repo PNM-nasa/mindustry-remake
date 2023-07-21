@@ -82,7 +82,7 @@ public class Build{
             tile.build.updateProximity();
             tile.build.noSleep();
             Fx.rotateBlock.at(tile.build.x, tile.build.y, tile.build.block.size);
-            Events.fire(new BuildRotateEvent(tile.build, unit, previous));
+            Events.fire(new BuildRotateEvent(tile.build, unit, tile.build.rotation, previous));
             return;
         }
 
@@ -175,7 +175,7 @@ public class Build{
             return false;
         }
 
-        if(!type.canPlaceOn(tile, team, rotation)){
+        if(!type.canPlaceOn(tile, team, rotation = Mathf.mod(rotation, 4))){
             return false;
         }
 
