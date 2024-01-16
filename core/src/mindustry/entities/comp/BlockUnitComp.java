@@ -24,6 +24,13 @@ abstract class BlockUnitComp implements Unitc{
     }
 
     @Override
+    public void add(){
+        if(tile == null){
+            throw new RuntimeException("Do not add BlockUnit entities to the game, they will simply crash. Internal use only.");
+        }
+    }
+
+    @Override
     public void update(){
         if(tile != null){
             team = tile.team;
@@ -61,7 +68,7 @@ abstract class BlockUnitComp implements Unitc{
         if(tile != null && this.team != team){
             this.team = team;
             if(tile.team != team){
-                tile.team(team);
+                tile.changeTeam(team);
             }
         }
     }

@@ -27,10 +27,12 @@ public class LCanvas extends Table{
     public DragLayout statements;
     public ScrollPane pane;
     public Group jumps;
+
     StatementElem dragging;
     StatementElem hovered;
     float targetWidth;
     int jumpCount = 0;
+    boolean privileged;
     Seq<Tooltip> tooltips = new Seq<>();
 
     public LCanvas(){
@@ -98,7 +100,7 @@ public class LCanvas extends Table{
 
     public void rebuild(){
         targetWidth = useRows() ? 400f : 900f;
-        float s = pane != null ? pane.getScrollPercentY() : 0f;
+        float s = pane != null ? pane.getVisualScrollY() : 0f;
         String toLoad = statements != null ? save() : null;
 
         clear();
@@ -115,9 +117,11 @@ public class LCanvas extends Table{
         }).grow().get();
         pane.setFlickScroll(false);
 
+        pane.setScrollYForce(s);
+        pane.updateVisualScroll();
         //load old scroll percent
         Core.app.post(() -> {
-            pane.setScrollPercentY(s);
+            pane.setScrollYForce(s);
             pane.updateVisualScroll();
         });
 
@@ -146,7 +150,7 @@ public class LCanvas extends Table{
     public void load(String asm){
         jumps.clear();
 
-        Seq<LStatement> statements = LAssembler.read(asm);
+        Seq<LStatement> statements = LAssembler.read(asm, privileged);
         statements.truncate(LExecutor.maxInstructions);
         this.statements.clearChildren();
         for(LStatement st : statements){
@@ -325,7 +329,7 @@ public class LCanvas extends Table{
             st.elem = this;
 
             background(Tex.whitePane);
-            setColor(st.color());
+            setColor(st.category().color);
             margin(0f);
             touchable = Touchable.enabled;
 
@@ -450,7 +454,9 @@ public class LCanvas extends Table{
         public JumpCurve curve;
 
         public JumpButton(Prov<StatementElem> getter, Cons<StatementElem> setter){
-            super(Tex.logicNode, Styles.colori);
+            super(Tex.logicNode, new ImageButtonStyle(){{
+                imageUpColor = Color.white;
+            }});
 
             to = getter;
             addListener(listener = new ClickListener());

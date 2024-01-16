@@ -47,7 +47,10 @@ public class Build{
         Block sub = ConstructBlock.get(previous.size);
 
         Seq<Building> prevBuild = new Seq<>(1);
-        if(tile.build != null) prevBuild.add(tile.build);
+        if(tile.build != null){
+            prevBuild.add(tile.build);
+            tile.build.onDeconstructed(unit);
+        }
 
         tile.setBlock(sub, team, rotation);
         var build = (ConstructBuild)tile.build;
@@ -59,7 +62,7 @@ public class Build{
             tile.build.lastAccessed = unit.getControllerName();
         }
 
-        Core.app.post(() -> Events.fire(new BlockBuildBeginEvent(tile, team, unit, true)));
+        Events.fire(new BlockBuildBeginEvent(tile, team, unit, true));
     }
 
     /** Places a ConstructBlock at this location. */
@@ -77,10 +80,37 @@ public class Build{
         //auto-rotate the block to the correct orientation and bail out
         if(tile.team() == team && tile.block == result && tile.build != null && tile.block.quickRotate){
             if(unit != null && unit.getControllerName() != null) tile.build.lastAccessed = unit.getControllerName();
+            int previous = tile.build.rotation;
             tile.build.rotation = Mathf.mod(rotation, 4);
             tile.build.updateProximity();
             tile.build.noSleep();
             Fx.rotateBlock.at(tile.build.x, tile.build.y, tile.build.block.size);
+            Events.fire(new BuildRotateEvent(tile.build, unit, previous));
+            return;
+        }
+
+        //repair derelict tile
+        if(tile.team() == Team.derelict && tile.block == result && tile.build != null && tile.block.allowDerelictRepair && state.rules.derelictRepair){
+            float healthf = tile.build.healthf();
+            var config = tile.build.config();
+
+            tile.setBlock(result, team, rotation);
+
+            if(unit != null && unit.getControllerName() != null) tile.build.lastAccessed = unit.getControllerName();
+
+            if(config != null){
+                tile.build.configured(unit, config);
+            }
+            //keep health
+            tile.build.health = result.health * healthf;
+
+            if(fogControl.isVisibleTile(team, tile.x, tile.y)){
+                result.placeEffect.at(tile.drawx(), tile.drawy(), result.size);
+                Fx.rotateBlock.at(tile.build.x, tile.build.y, tile.build.block.size);
+                //doesn't play a sound
+            }
+
+            Events.fire(new BlockBuildEndEvent(tile, unit, team, false, config));
             return;
         }
 
@@ -94,7 +124,7 @@ public class Build{
 
         Block previous = tile.block();
         Block sub = ConstructBlock.get(result.size);
-        Seq<Building> prevBuild = new Seq<>(9);
+        var prevBuild = new Seq<Building>(9);
 
         result.beforePlaceBegan(tile, previous);
         tmp.clear();
@@ -113,9 +143,9 @@ public class Build{
         build.prevBuild = prevBuild;
         if(unit != null && unit.getControllerName() != null) build.lastAccessed = unit.getControllerName();
 
-        result.placeBegan(tile, previous);
+        Events.fire(new BlockBuildBeginEvent(tile, team, unit, false));
 
-        Core.app.post(() -> Events.fire(new BlockBuildBeginEvent(tile, team, unit, false)));
+        result.placeBegan(tile, previous, unit);
     }
 
     /** Returns whether a tile can be placed at this location by this team. */
@@ -126,7 +156,7 @@ public class Build{
     /** Returns whether a tile can be placed at this location by this team. */
     public static boolean validPlace(Block type, Team team, int x, int y, int rotation, boolean checkVisible){
         //the wave team can build whatever they want as long as it's visible - banned blocks are not applicable
-        if(type == null || (checkVisible && (!type.isPlaceable() && !(state.rules.waves && team == state.rules.waveTeam && type.isVisible())))){
+        if(type == null || (checkVisible && (!type.environmentBuildable() || (!type.isPlaceable() && !(state.rules.waves && team == state.rules.waveTeam && type.isVisible()))))){
             return false;
         }
 
@@ -169,6 +199,10 @@ public class Build{
             return false;
         }
 
+        if((type.isFloor() && tile.floor() == type) || (type.isOverlay() && tile.overlay() == type)){
+            return false;
+        }
+
         if(!type.canPlaceOn(tile, team, rotation)){
             return false;
         }
@@ -184,16 +218,14 @@ public class Build{
 
                 if(
                 check == null || //nothing there
+                (type.size == 2 && world.getDarkness(wx, wy) >= 3) ||
+                (state.rules.staticFog && state.rules.fog && !fogControl.isDiscovered(team, wx, wy)) ||
                 (check.floor().isDeep() && !type.floating && !type.requiresWater && !type.placeableLiquid) || //deep water
-                (type == check.block() && check.build != null && rotation == check.build.rotation && type.rotate) || //same block, same rotation
+                (type == check.block() && check.build != null && rotation == check.build.rotation && type.rotate && !((type == check.block && check.team() == Team.derelict))) || //same block, same rotation
                 !check.interactable(team) || //cannot interact
                 !check.floor().placeableOn || //solid wall
                 (!checkVisible && !check.block().alwaysReplace) || //replacing a block that should be replaced (e.g. payload placement)
-                    !((type.canReplace(check.block()) || //can replace type
-                        //controversial change: allow rebuilding damaged blocks
-                        //this could be buggy and abuse-able, so I'm not enabling it yet
-                        //note that this requires a change in BuilderComp as well
-                        //(type == check.block() && check.centerX() == x && check.centerY() == y && check.build != null && check.build.health < check.build.maxHealth - 0.0001f) ||
+                    !(((type.canReplace(check.block()) || (type == check.block && state.rules.derelictRepair && check.team() == Team.derelict)) || //can replace type OR can replace derelict block of same type
                         (check.build instanceof ConstructBuild build && build.current == type && check.centerX() == tile.x && check.centerY() == tile.y)) && //same type in construction
                     type.bounds(tile.x, tile.y, Tmp.r1).grow(0.01f).contains(check.block.bounds(check.centerX(), check.centerY(), Tmp.r2))) || //no replacement
                 (type.requiresWater && check.floor().liquidDrop != Liquids.water) //requires water but none found
@@ -201,7 +233,15 @@ public class Build{
             }
         }
 
+        if(state.rules.placeRangeCheck && !state.isEditor() && getEnemyOverlap(type, team, x, y) != null){
+            return false;
+        }
+
         return true;
+    }
+
+    public static @Nullable Building getEnemyOverlap(Block block, Team team, int x, int y){
+        return indexer.findEnemyTile(team, x * tilesize + block.size, y * tilesize + block.size, block.placeOverlapRange + 4f, p -> true);
     }
 
     public static boolean contactsGround(int x, int y, Block block){
@@ -221,12 +261,12 @@ public class Build{
 
     public static boolean contactsShallows(int x, int y, Block block){
         if(block.isMultiblock()){
-            for(Point2 point : Edges.getInsideEdges(block.size)){
+            for(Point2 point : block.getInsideEdges()){
                 Tile tile = world.tile(x + point.x, y + point.y);
                 if(tile != null && !tile.floor().isDeep()) return true;
             }
 
-            for(Point2 point : Edges.getEdges(block.size)){
+            for(Point2 point : block.getEdges()){
                 Tile tile = world.tile(x + point.x, y + point.y);
                 if(tile != null && !tile.floor().isDeep()) return true;
             }
